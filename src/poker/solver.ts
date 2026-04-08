@@ -34,8 +34,10 @@ export function solve(
     board.length === 3 ? 'flop'    :
     board.length === 4 ? 'turn'    : 'river'
 
-  // Villains = playerCount - 1 (hero is one player)
-  const villains = Math.max(1, playerCount - 1)
+  // Pre-flop equity must be computed HU (1 villain) regardless of player count.
+  // GTO pre-flop charts are built on HU equity; player count adjusts the
+  // opening threshold separately, not the equity calculation itself.
+  const villains = street === 'preflop' ? 1 : Math.max(1, playerCount - 1)
   const equity = computeEquity(holeNums, boardNums, villains, 2000)
 
   const allNums  = [...holeNums, ...boardNums]
@@ -62,16 +64,27 @@ const POS_BET_DELTA: Record<Position, number> = {
   BB:  -13,
 }
 
-// Pre-flop: equity threshold offset by position (vs random hand, HU).
-// Negative = can open with weaker hands; positive = needs stronger hand.
-const POS_PREFLOP_OFFSET: Record<Position, number> = {
-  BTN: -0.08,
-  CO:  -0.05,
-  HJ:  -0.02,
-  MP:  0,
-  UTG: +0.04,
-  SB:  -0.03,
-  BB:  +0.02,
+// Pre-flop: added to raw HU equity before comparing against thresholds.
+// Positive = easier to clear threshold (better position / fewer players).
+// Calibrated so BTN 6-max opens ~50% of hands, UTG ~20%.
+const POS_PREFLOP_ADJ: Record<Position, number> = {
+  BTN: +0.10,
+  CO:  +0.06,
+  HJ:  +0.02,
+  MP:  -0.02,
+  UTG: -0.06,
+  SB:  +0.05,
+  BB:  -0.04,
+}
+
+// More players behind = harder to open; fewer = easier.
+function preflopPlayerAdj(playerCount: number): number {
+  if (playerCount <= 2) return +0.06
+  if (playerCount === 3) return +0.03
+  if (playerCount === 4) return 0
+  if (playerCount === 5) return -0.02
+  if (playerCount === 6) return -0.04
+  return -0.06 // 7+
 }
 
 // ─── Player-count modifier (multi-way = tighten up) ───────────────────────────
@@ -93,37 +106,60 @@ function buildActions(
   position: Position | null,
   playerCount: number,
 ): Action[] {
-  if (street === 'preflop') return preflopActions(equity, position)
+  if (street === 'preflop') return preflopActions(equity, position, playerCount)
   return postflopActions(equity, street, board, position, playerCount)
 }
 
 // ─── Pre-flop ─────────────────────────────────────────────────────────────────
+//
+// Thresholds are compared against adjusted HU equity (equity + posAdj + playerAdj).
+// Reference hand equities (HU vs random):
+//   AA 85%  KK 82%  QQ 80%  JJ 77%  TT 75%
+//   AKs 67%  AKo 65%  AQs 66%  KQs 63%
+//   QJs 58%  JTs 57%  22 53%  72o 32%
+//
+// With BTN +0.10, 6-max -0.04 → net +0.06:
+//   QJs: 0.587 + 0.06 = 0.647 → Open 90%  ✓
+//   22:  0.530 + 0.06 = 0.590 → Open 80%  ✓
+//   72o: 0.320 + 0.06 = 0.380 → Fold 90%  ✓
+//
+// With UTG -0.06, 6-max -0.04 → net -0.10:
+//   QJs: 0.587 - 0.10 = 0.487 → Open 40% (borderline UTG — correct)
+//   AKo: 0.650 - 0.10 = 0.550 → Open 80%  ✓
 
-function preflopActions(equity: number, position: Position | null): Action[] {
-  const offset = position ? POS_PREFLOP_OFFSET[position] : 0
-  const e = equity + offset  // adjusted equity threshold
+function preflopActions(equity: number, position: Position | null, playerCount: number): Action[] {
+  const posAdj = position ? POS_PREFLOP_ADJ[position] : 0
+  const plrAdj = preflopPlayerAdj(playerCount)
+  const e = equity + posAdj + plrAdj
 
-  // BB special case: in the big blind we also want a "defend" action label
   const isBB = position === 'BB'
 
-  if (e >= 0.78) return [{ label: isBB ? 'Raise / 3bet' : 'Open / 3bet', freq: 100 }]
-  if (e >= 0.68) return [
-    { label: isBB ? 'Raise'   : 'Open',  freq: 90 },
-    { label: 'Fold',                      freq: 10 },
+  if (e >= 0.76) return [{ label: isBB ? 'Raise / 3bet' : 'Open / 3bet', freq: 100 }]
+  if (e >= 0.66) return [
+    { label: isBB ? 'Raise'        : 'Open',         freq: 95 },
+    { label: 'Fold',                                   freq: 5  },
   ]
-  if (e >= 0.58) return [
-    { label: isBB ? 'Defend/Raise' : 'Open', freq: isBB ? 75 : 80 },
-    { label: 'Fold',                          freq: isBB ? 25 : 20 },
+  if (e >= 0.60) return [
+    { label: isBB ? 'Raise/Defend' : 'Open',          freq: 90 },
+    { label: 'Fold',                                   freq: 10 },
   ]
-  if (e >= 0.50) return [
-    { label: isBB ? 'Defend' : 'Open',    freq: isBB ? 60 : 60 },
-    { label: 'Fold',                       freq: isBB ? 40 : 40 },
+  if (e >= 0.54) return [
+    { label: isBB ? 'Defend/Raise' : 'Open',          freq: isBB ? 75 : 80 },
+    { label: 'Fold',                                   freq: isBB ? 25 : 20 },
   ]
-  if (e >= 0.43) return [
-    { label: 'Open/Steal',  freq: 35 },
-    { label: 'Fold',        freq: 65 },
+  if (e >= 0.49) return [
+    { label: isBB ? 'Defend'       : 'Open',          freq: isBB ? 60 : 65 },
+    { label: 'Fold',                                   freq: isBB ? 40 : 35 },
   ]
-  return [{ label: 'Fold', freq: 90 }, { label: 'Open', freq: 10 }]
+  if (e >= 0.44) return [
+    { label: 'Open / Steal',                           freq: 40 },
+    { label: 'Fold',                                   freq: 60 },
+  ]
+  if (e >= 0.40) return [
+    { label: 'Open / Steal',                           freq: 20 },
+    { label: 'Fold',                                   freq: 80 },
+  ]
+  return [{ label: 'Fold', freq: 95 }, { label: 'Open', freq: 5 }]
 }
 
 // ─── Post-flop ────────────────────────────────────────────────────────────────
