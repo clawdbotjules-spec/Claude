@@ -1,9 +1,9 @@
 /**
  * Ring event handler.
  *
- * The Even Hub SDK delivers all ring interactions as a generic event object.
- * We resolve the event type by checking multiple possible fields (matching the
- * pattern used by the pong-even-g2 reference app):
+ * The Even Hub SDK delivers ring interactions as a generic event object.
+ * We resolve the event type by checking multiple possible fields (pattern
+ * from the pong-even-g2 reference app):
  *
  *   event.listEvent?.eventType  ??
  *   event.textEvent?.eventType  ??
@@ -12,6 +12,13 @@
  *
  * Numeric codes:  0 = tap  1 = scroll-up  2 = scroll-down  3 = double-tap
  * String codes:   "CLICK", "SCROLL_TOP"/"UP", "SCROLL_BOTTOM"/"DOWN", "DOUBLE"
+ *
+ * SDK quirk: tap (code 0) is sometimes normalised to `undefined` by the
+ * firmware before delivery.  We detect this by checking whether the event
+ * came from a text/list container but carried no eventType — that means tap.
+ *
+ * Scroll throttle: firmware can fire duplicate scroll events within a single
+ * swipe; we enforce a 300 ms minimum interval between scroll actions.
  */
 
 import { state, resetCards, canAnalyzeNow, holeCards, boardCards, TOTAL_CARDS } from './state'
@@ -24,8 +31,15 @@ import { solve } from './poker/solver'
 
 const enum EvType { Tap = 0, ScrollUp = 1, ScrollDown = 2, DoubleTap = 3, Unknown = -1 }
 
+// Minimum ms between consecutive scroll actions (firmware duplicate-fire guard)
+const SCROLL_THROTTLE_MS = 300
+let lastScrollAt = 0
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function resolveEventType(event: any): EvType {
+  // Check whether the event came from an interactive container at all
+  const hasContainer = !!(event?.listEvent ?? event?.textEvent ?? event?.sysEvent)
+
   const raw: unknown =
     event?.listEvent?.eventType ??
     event?.textEvent?.eventType ??
@@ -35,6 +49,8 @@ function resolveEventType(event: any): EvType {
     (event?.jsonData as Record<string, unknown> | undefined)?.Event_Type ??
     (event?.jsonData as Record<string, unknown> | undefined)?.type
 
+  // SDK quirk: tap (0) is sometimes delivered as undefined from a container
+  if ((raw === undefined || raw === null) && hasContainer) return EvType.Tap
   if (raw === undefined || raw === null) return EvType.Unknown
 
   // Numeric codes
@@ -48,13 +64,20 @@ function resolveEventType(event: any): EvType {
   // String codes (case-insensitive)
   if (typeof raw === 'string') {
     const up = raw.toUpperCase()
-    if (up.includes('DOUBLE'))        return EvType.DoubleTap
-    if (up.includes('CLICK'))         return EvType.Tap
-    if (up.includes('SCROLL_TOP')  || up.includes('_UP')  || up === 'UP')   return EvType.ScrollUp
-    if (up.includes('SCROLL_BOTTOM')|| up.includes('_DOWN')|| up === 'DOWN') return EvType.ScrollDown
+    if (up.includes('DOUBLE'))                                      return EvType.DoubleTap
+    if (up.includes('CLICK'))                                       return EvType.Tap
+    if (up.includes('SCROLL_TOP')   || up.includes('_UP')   || up === 'UP')   return EvType.ScrollUp
+    if (up.includes('SCROLL_BOTTOM')|| up.includes('_DOWN') || up === 'DOWN') return EvType.ScrollDown
   }
 
   return EvType.Unknown
+}
+
+function throttledScroll(type: EvType.ScrollUp | EvType.ScrollDown): boolean {
+  const now = Date.now()
+  if (now - lastScrollAt < SCROLL_THROTTLE_MS) return false
+  lastScrollAt = now
+  return true
 }
 
 // ─── Public handler ────────────────────────────────────────────────────────────
@@ -87,15 +110,21 @@ function handleWelcome(type: EvType): void {
 function handleRank(type: EvType): void {
   switch (type) {
     case EvType.ScrollUp:
-      if (state.rankIndex > 0) { state.rankIndex--; render() }
+      if (throttledScroll(EvType.ScrollUp) && state.rankIndex > 0) {
+        state.rankIndex--
+        render()
+      }
       break
 
     case EvType.ScrollDown:
-      if (state.rankIndex < RANKS.length - 1) { state.rankIndex++; render() }
+      if (throttledScroll(EvType.ScrollDown) && state.rankIndex < RANKS.length - 1) {
+        state.rankIndex++
+        render()
+      }
       break
 
     case EvType.Tap:
-      // Lock in rank, move to suit selection
+      // Lock in the rank; move to suit selection
       state.pendingRank = RANKS[state.rankIndex]!
       state.suitIndex   = 0
       state.phase       = 'SELECT_SUIT'
@@ -103,10 +132,8 @@ function handleRank(type: EvType): void {
       break
 
     case EvType.DoubleTap:
-      // Skip straight to analysis if we already have hole cards
-      if (canAnalyzeNow()) {
-        startSolving()
-      }
+      // Jump straight to analysis if we're at a valid street boundary
+      if (canAnalyzeNow()) startSolving()
       break
   }
 }
@@ -114,15 +141,20 @@ function handleRank(type: EvType): void {
 function handleSuit(type: EvType): void {
   switch (type) {
     case EvType.ScrollUp:
-      if (state.suitIndex > 0) { state.suitIndex--; render() }
+      if (throttledScroll(EvType.ScrollUp) && state.suitIndex > 0) {
+        state.suitIndex--
+        render()
+      }
       break
 
     case EvType.ScrollDown:
-      if (state.suitIndex < SUITS.length - 1) { state.suitIndex++; render() }
+      if (throttledScroll(EvType.ScrollDown) && state.suitIndex < SUITS.length - 1) {
+        state.suitIndex++
+        render()
+      }
       break
 
     case EvType.Tap: {
-      // Confirm the card
       const card: Card = {
         rank: state.pendingRank!,
         suit: SUITS[state.suitIndex]!,
@@ -133,7 +165,7 @@ function handleSuit(type: EvType): void {
     }
 
     case EvType.DoubleTap:
-      // Go back to rank selection for this card
+      // Cancel this card — go back to rank selection
       state.phase     = 'SELECT_RANK'
       state.rankIndex = 0
       render()
@@ -150,19 +182,17 @@ function handleResult(type: EvType): void {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-/** After a card is confirmed, move to the next card or start solving. */
 function advanceAfterCard(): void {
   const nextIndex = state.cardIndex + 1
 
   if (nextIndex >= TOTAL_CARDS) {
-    // All 7 cards entered — solve immediately
     startSolving()
     return
   }
 
-  state.cardIndex  = nextIndex
-  state.rankIndex  = 0
-  state.suitIndex  = 0
+  state.cardIndex   = nextIndex
+  state.rankIndex   = 0
+  state.suitIndex   = 0
   state.pendingRank = null
   state.phase       = 'SELECT_RANK'
   render()
@@ -172,7 +202,7 @@ function startSolving(): void {
   state.phase = 'SOLVING'
   render()
 
-  // Yield to let the "Calculating…" frame paint, then compute
+  // Yield so the "Calculating…" frame renders before the heavy compute
   setTimeout(() => {
     try {
       state.result = solve(holeCards(), boardCards())

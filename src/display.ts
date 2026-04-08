@@ -42,6 +42,9 @@ function captureContainer(): TextContainerProperty {
     height: H,
     isEventCapture: 1,
     paddingLength: 0,
+    borderWidth: 0,
+    borderColor: 0,
+    borderRadius: 0,
   })
 }
 
@@ -55,7 +58,10 @@ function mainContainer(content: string): TextContainerProperty {
     width: W,
     height: H,
     isEventCapture: 0,
-    paddingLength: 0,
+    paddingLength: 4,
+    borderWidth: 0,
+    borderColor: 0,
+    borderRadius: 0,
   })
 }
 
