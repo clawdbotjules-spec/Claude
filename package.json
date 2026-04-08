@@ -6,7 +6,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "pack": "npm run build && evenhub pack"
+    "pack": "npm run build && evenhub pack app.json dist -o poker-solver-g2.ehpk"
   },
   "dependencies": {
     "@evenrealities/even_hub_sdk": "^0.0.9"

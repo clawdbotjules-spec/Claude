@@ -1,15 +1,13 @@
 {
-  "id": "com.poker.solver.g2",
+  "package_id": "com.poker.solver.g2",
   "name": "Poker Solver",
   "version": "1.0.0",
   "description": "GTO poker solver – enter hole cards and board, get action frequencies and sizing",
   "author": "user",
-  "entry": "index.html",
+  "entrypoint": "index.html",
   "edition": "202601",
-  "minAppVersion": "0.1.0",
-  "minSdkVersion": "0.0.9",
-  "languages": ["en"],
-  "permissions": {
-    "network": []
-  }
+  "min_app_version": "0.1.0",
+  "min_sdk_version": "0.0.9",
+  "supported_languages": ["en"],
+  "permissions": []
 }
