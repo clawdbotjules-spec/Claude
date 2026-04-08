@@ -1,0 +1,44 @@
+/* Browser preview styles – these do NOT affect the G2 display */
+
+:root {
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  background: #0a0a0a;
+  color: #e0e0e0;
+}
+
+body {
+  margin: 0;
+  padding: 24px;
+  min-height: 100vh;
+}
+
+#app {
+  max-width: 640px;
+  margin: 0 auto;
+}
+
+h1 {
+  font-size: 1.4rem;
+  color: #7dc;
+  margin: 0 0 8px;
+}
+
+#status {
+  font-size: 0.85rem;
+  color: #888;
+  margin-bottom: 24px;
+}
+
+/* Simulate the G2 monochrome overlay */
+.preview {
+  background: #111;
+  border: 1px solid #333;
+  border-radius: 8px;
+  padding: 16px 20px;
+  font-family: 'Courier New', monospace;
+  font-size: 1.1rem;
+  line-height: 1.5;
+  color: #f0f0f0;
+  white-space: pre;
+  min-height: 200px;
+}
