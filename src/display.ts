@@ -1,14 +1,15 @@
 /**
  * G2 display layer.
  *
- * Layout:
- *   Container 1 (capture) – invisible, isEventCapture=1, full screen.
- *     Prevents firmware from consuming ring scroll events before the app sees them.
- *   Container 2 (main)    – text content, full screen.
+ * Containers:
+ *   1  capture  – isEventCapture=1, full screen, receives all ring input.
+ *                 Prevents firmware from consuming scroll events internally.
+ *   2  main     – text content, full screen.
  *
- * On first render: createStartUpPageContainer
- * Subsequent:      textContainerUpgrade  (content-only, no layout rebuild)
- * When layout must change (welcome ↔ cards): rebuildPageContainer
+ * Render strategy:
+ *   First call      → createStartUpPageContainer  (layout + content)
+ *   Content update  → textContainerUpgrade         (fast, no flicker)
+ *   Phase change    → rebuildPageContainer          (layout + content)
  */
 
 import {
@@ -18,16 +19,26 @@ import {
   TextContainerUpgrade,
 } from '@evenrealities/even_hub_sdk'
 
-import { state, canAnalyzeNow, enteredCards, holeCards, boardCards } from './state'
+import {
+  state,
+  canAnalyzeNow,
+  enteredCards,
+  holeCards,
+  boardCards,
+  POSITIONS,
+  POSITION_LABEL,
+  MIN_PLAYERS,
+  MAX_PLAYERS,
+} from './state'
 import { RANKS, SUITS, SUIT_SYMBOL, cardDisplay, cardIndexLabel } from './poker/cards'
 
 // ─── Display constants ────────────────────────────────────────────────────────
-const W = 488    // text container width (px)
-const H = 288    // display height (px)
+const W = 488
+const H = 288
 const CAPTURE_ID = 1
 const MAIN_ID    = 2
 
-let started = false   // has createStartUpPageContainer been called?
+let started = false
 
 // ─── Container builders ───────────────────────────────────────────────────────
 
@@ -72,14 +83,13 @@ function pageConfig(content: string) {
   }
 }
 
-// ─── Public render entry-point ────────────────────────────────────────────────
+// ─── Public API ───────────────────────────────────────────────────────────────
 
+/** Fast text-only update (no layout rebuild). */
 export function render(): void {
   const { bridge } = state
   if (!bridge) return
-
   const content = buildContent()
-
   if (!started) {
     bridge.createStartUpPageContainer(new CreateStartUpPageContainer(pageConfig(content)))
     started = true
@@ -88,13 +98,11 @@ export function render(): void {
   }
 }
 
-/** Force a full page rebuild (layout containers are re-sent). */
+/** Full page rebuild — use when switching major phases. */
 export function renderFull(): void {
   const { bridge } = state
   if (!bridge) return
-
   const content = buildContent()
-
   if (!started) {
     bridge.createStartUpPageContainer(new CreateStartUpPageContainer(pageConfig(content)))
     started = true
@@ -103,32 +111,53 @@ export function renderFull(): void {
   }
 }
 
-// ─── Content builders ─────────────────────────────────────────────────────────
+// ─── Screen routing ───────────────────────────────────────────────────────────
 
 function buildContent(): string {
   switch (state.phase) {
-    case 'WELCOME':     return welcome()
-    case 'SELECT_RANK': return selectRank()
-    case 'SELECT_SUIT': return selectSuit()
-    case 'SOLVING':     return solving()
-    case 'RESULT':      return result()
+    case 'WELCOME':          return welcome()
+    case 'SELECT_POSITION':  return selectPosition()
+    case 'SELECT_RANK':      return selectRank()
+    case 'SELECT_SUIT':      return selectSuit()
+    case 'SELECT_PLAYERS':   return selectPlayers()
+    case 'SOLVING':          return solving()
+    case 'RESULT':           return result()
   }
 }
 
-// ── Welcome ──────────────────────────────────────────────────────────────────
+// ─── Screens ─────────────────────────────────────────────────────────────────
 
 function welcome(): string {
-  return lines(
+  return join(
     'POKER SOLVER',
     '',
     'Tap to begin',
     '',
-    'Enter hole cards',
-    'then community cards',
-    'for GTO advice',
+    '1. Pick position',
+    '2. Enter hole cards',
+    '3. Enter board cards',
+    '   (or 2x tap to',
+    '    analyze sooner)',
+    '4. Get GTO advice',
+  )
+}
+
+// ── Position selection ────────────────────────────────────────────────────────
+
+function selectPosition(): string {
+  const pos   = POSITIONS[state.positionIndex]!
+  const label = POSITION_LABEL[pos]
+  const prev  = state.positionIndex > 0                 ? POSITION_LABEL[POSITIONS[state.positionIndex - 1]!] : null
+  const next  = state.positionIndex < POSITIONS.length - 1 ? POSITION_LABEL[POSITIONS[state.positionIndex + 1]!] : null
+
+  return join(
+    '\u25B6 Your Position',
     '',
-    '(2x tap = analyze',
-    ' after hole cards)',
+    prev  ? `  ${prev}`  : '  \u2014',
+    `\u25BA ${label} \u25C4`,
+    next  ? `  ${next}`  : '  \u2014',
+    '',
+    'Scroll \u2195  Tap=confirm',
   )
 }
 
@@ -137,22 +166,21 @@ function welcome(): string {
 function selectRank(): string {
   const label = cardIndexLabel(state.cardIndex)
   const rank  = RANKS[state.rankIndex]!
-  const prev  = state.rankIndex > 0                ? RANKS[state.rankIndex - 1] : null
-  const next  = state.rankIndex < RANKS.length - 1 ? RANKS[state.rankIndex + 1] : null
+  const prev  = state.rankIndex > 0                 ? RANKS[state.rankIndex - 1] : null
+  const next  = state.rankIndex < RANKS.length - 1  ? RANKS[state.rankIndex + 1] : null
 
   const entered = enteredCards().map(c => cardDisplay(c)).join(' ')
+  const pos     = state.position ?? '?'
+  const hint    = canAnalyzeNow() ? 'Tap=confirm  2x=analyze' : 'Scroll \u2195  Tap=confirm'
 
-  const hint = canAnalyzeNow() ? 'Tap=confirm  2x=analyze' : 'Scroll \u2195  Tap=confirm'
-
-  return lines(
-    `\u25B6 ${label}`,
+  return join(
+    `\u25B6 ${label}  [${pos}]`,
     '',
-    ...(prev  ? [`  ${prev}`]  : ['   ']),
+    prev ? `  ${prev}` : '  \u2014',
     `\u25BA ${rank} \u25C4`,
-    ...(next  ? [`  ${next}`]  : ['   ']),
+    next ? `  ${next}` : '  \u2014',
     '',
     entered ? `Cards: ${entered}` : '',
-    '',
     hint,
   )
 }
@@ -166,12 +194,40 @@ function selectSuit(): string {
   const prev  = state.suitIndex > 0                ? SUITS[state.suitIndex - 1] : null
   const next  = state.suitIndex < SUITS.length - 1 ? SUITS[state.suitIndex + 1] : null
 
-  return lines(
+  return join(
     `\u25B6 ${label}: ${state.pendingRank}`,
     '',
-    ...(prev  ? [`  ${SUIT_SYMBOL[prev]}`]  : ['   ']),
+    prev ? `  ${SUIT_SYMBOL[prev]}` : '  \u2014',
     `\u25BA ${sym} \u25C4`,
-    ...(next  ? [`  ${SUIT_SYMBOL[next]}`] : ['   ']),
+    next ? `  ${SUIT_SYMBOL[next]}` : '  \u2014',
+    '',
+    'Scroll \u2195  Tap=confirm',
+    '2x tap = back to rank',
+  )
+}
+
+// ── Player count selection ────────────────────────────────────────────────────
+
+function selectPlayers(): string {
+  const street = state.streetForPlayers ?? 'flop'
+  const streetLabel = street.charAt(0).toUpperCase() + street.slice(1)
+
+  const count = MIN_PLAYERS + state.playerCountIndex
+  const prev  = count > MIN_PLAYERS ? count - 1 : null
+  const next  = count < MAX_PLAYERS ? count + 1 : null
+
+  const hd = holeCards().map(c => cardDisplay(c)).join(' ')
+  const bd = boardCards().map(c => cardDisplay(c)).join(' ')
+
+  return join(
+    `\u25B6 Players (${streetLabel})`,
+    '',
+    prev !== null ? `  ${prev} players` : '  \u2014',
+    `\u25BA ${count} players \u25C4`,
+    next !== null ? `  ${next} players` : '  \u2014',
+    '',
+    `Hand: ${hd}`,
+    bd ? `Board: ${bd}` : '',
     '',
     'Scroll \u2195  Tap=confirm',
   )
@@ -180,13 +236,15 @@ function selectSuit(): string {
 // ── Solving ───────────────────────────────────────────────────────────────────
 
 function solving(): string {
-  const hole  = holeCards().map(c => cardDisplay(c)).join(' ')
-  const board = boardCards().map(c => cardDisplay(c)).join(' ')
-  return lines(
+  const hd = holeCards().map(c => cardDisplay(c)).join(' ')
+  const bd = boardCards().map(c => cardDisplay(c)).join(' ')
+  const pos = state.position ?? '?'
+  return join(
     'Calculating\u2026',
     '',
-    `Hand: ${hole}`,
-    board ? `Board: ${board}` : 'Pre-flop',
+    `Pos: ${pos}  Players: ${state.playerCount}`,
+    `Hand: ${hd}`,
+    bd ? `Board: ${bd}` : 'Pre-flop',
     '',
     'Running Monte Carlo\u2026',
   )
@@ -196,35 +254,35 @@ function solving(): string {
 
 function result(): string {
   if (!state.result) return 'No result'
+  const r = state.result
 
-  const { result: r } = state
-  const hole  = holeCards().map(c => cardDisplay(c)).join(' ')
-  const board = boardCards().map(c => cardDisplay(c)).join(' ')
+  const hd = holeCards().map(c => cardDisplay(c)).join(' ')
+  const bd = boardCards().map(c => cardDisplay(c)).join(' ')
   const eqPct = Math.round(r.equity * 100)
-
+  const pos = r.position ?? '?'
   const streetLabel = r.street.charAt(0).toUpperCase() + r.street.slice(1)
 
   const actionLines = r.actions
     .filter(a => a.freq > 0)
     .map(a => {
-      const bar = '\u2588'.repeat(Math.round(a.freq / 10)) // ▓ visual bar (max 10)
+      const bar = '\u2588'.repeat(Math.round(a.freq / 10))
       return `${bar.padEnd(10)} ${String(a.freq).padStart(3)}%  ${a.label}`
     })
 
-  return lines(
-    `Hand: ${hole}`,
-    board ? `Board: ${board}` : '',
-    `Made: ${r.handName}  [${streetLabel}]`,
+  return join(
+    `${hd}  [${pos} / ${r.playerCount}p]`,
+    bd ? `Board: ${bd}` : '',
+    `Made: ${r.handName}  ${streetLabel}`,
     `Equity: ${eqPct}%`,
-    '\u2500\u2500\u2500 GTO Strategy \u2500\u2500\u2500',
+    '\u2500\u2500 GTO Strategy \u2500\u2500',
     ...actionLines,
     '',
-    '2x tap = restart',
+    '2x tap = new hand',
   )
 }
 
 // ─── Utility ──────────────────────────────────────────────────────────────────
 
-function lines(...parts: string[]): string {
+function join(...parts: string[]): string {
   return parts.join('\n')
 }

@@ -1,27 +1,25 @@
 /**
  * Ring event handler.
  *
- * The Even Hub SDK delivers ring interactions as a generic event object.
- * We resolve the event type by checking multiple possible fields (pattern
- * from the pong-even-g2 reference app):
- *
- *   event.listEvent?.eventType  ??
- *   event.textEvent?.eventType  ??
- *   event.sysEvent?.eventType   ??
- *   event.jsonData?.eventType | event_type | type
+ * Event type resolution (pong-even-g2 pattern):
+ *   event.listEvent?.eventType ?? event.textEvent?.eventType ?? …
  *
  * Numeric codes:  0 = tap  1 = scroll-up  2 = scroll-down  3 = double-tap
- * String codes:   "CLICK", "SCROLL_TOP"/"UP", "SCROLL_BOTTOM"/"DOWN", "DOUBLE"
- *
- * SDK quirk: tap (code 0) is sometimes normalised to `undefined` by the
- * firmware before delivery.  We detect this by checking whether the event
- * came from a text/list container but carried no eventType — that means tap.
- *
- * Scroll throttle: firmware can fire duplicate scroll events within a single
- * swipe; we enforce a 300 ms minimum interval between scroll actions.
+ * SDK quirk: tap (code 0) may arrive as `undefined` from a container event.
+ * Scroll throttle: 300 ms minimum between scroll actions.
  */
 
-import { state, resetCards, canAnalyzeNow, holeCards, boardCards, TOTAL_CARDS } from './state'
+import {
+  state,
+  resetCards,
+  canAnalyzeNow,
+  holeCards,
+  boardCards,
+  TOTAL_CARDS,
+  POSITIONS,
+  MIN_PLAYERS,
+  MAX_PLAYERS,
+} from './state'
 import type { Card } from './poker/cards'
 import { RANKS, SUITS } from './poker/cards'
 import { render, renderFull } from './display'
@@ -31,13 +29,11 @@ import { solve } from './poker/solver'
 
 const enum EvType { Tap = 0, ScrollUp = 1, ScrollDown = 2, DoubleTap = 3, Unknown = -1 }
 
-// Minimum ms between consecutive scroll actions (firmware duplicate-fire guard)
 const SCROLL_THROTTLE_MS = 300
 let lastScrollAt = 0
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function resolveEventType(event: any): EvType {
-  // Check whether the event came from an interactive container at all
   const hasContainer = !!(event?.listEvent ?? event?.textEvent ?? event?.sysEvent)
 
   const raw: unknown =
@@ -49,11 +45,10 @@ function resolveEventType(event: any): EvType {
     (event?.jsonData as Record<string, unknown> | undefined)?.Event_Type ??
     (event?.jsonData as Record<string, unknown> | undefined)?.type
 
-  // SDK quirk: tap (0) is sometimes delivered as undefined from a container
+  // SDK normalises tap (0) to undefined in some firmware versions
   if ((raw === undefined || raw === null) && hasContainer) return EvType.Tap
   if (raw === undefined || raw === null) return EvType.Unknown
 
-  // Numeric codes
   if (typeof raw === 'number') {
     if (raw === 0) return EvType.Tap
     if (raw === 1) return EvType.ScrollUp
@@ -61,11 +56,10 @@ function resolveEventType(event: any): EvType {
     if (raw === 3) return EvType.DoubleTap
   }
 
-  // String codes (case-insensitive)
   if (typeof raw === 'string') {
     const up = raw.toUpperCase()
-    if (up.includes('DOUBLE'))                                      return EvType.DoubleTap
-    if (up.includes('CLICK'))                                       return EvType.Tap
+    if (up.includes('DOUBLE'))                                       return EvType.DoubleTap
+    if (up.includes('CLICK'))                                        return EvType.Tap
     if (up.includes('SCROLL_TOP')   || up.includes('_UP')   || up === 'UP')   return EvType.ScrollUp
     if (up.includes('SCROLL_BOTTOM')|| up.includes('_DOWN') || up === 'DOWN') return EvType.ScrollDown
   }
@@ -73,7 +67,7 @@ function resolveEventType(event: any): EvType {
   return EvType.Unknown
 }
 
-function throttledScroll(type: EvType.ScrollUp | EvType.ScrollDown): boolean {
+function canScroll(): boolean {
   const now = Date.now()
   if (now - lastScrollAt < SCROLL_THROTTLE_MS) return false
   lastScrollAt = now
@@ -88,43 +82,79 @@ export function handleEvent(event: any): void {
   if (type === EvType.Unknown) return
 
   switch (state.phase) {
-    case 'WELCOME':     handleWelcome(type);    break
-    case 'SELECT_RANK': handleRank(type);       break
-    case 'SELECT_SUIT': handleSuit(type);       break
-    case 'SOLVING':     /* ignore input */      break
-    case 'RESULT':      handleResult(type);     break
+    case 'WELCOME':          handleWelcome(type);   break
+    case 'SELECT_POSITION':  handlePosition(type);  break
+    case 'SELECT_RANK':      handleRank(type);      break
+    case 'SELECT_SUIT':      handleSuit(type);      break
+    case 'SELECT_PLAYERS':   handlePlayers(type);   break
+    case 'SOLVING':          /* ignore */           break
+    case 'RESULT':           handleResult(type);    break
   }
 }
 
-// ─── Phase handlers ───────────────────────────────────────────────────────────
+// ─── Welcome ──────────────────────────────────────────────────────────────────
 
 function handleWelcome(type: EvType): void {
   if (type === EvType.Tap || type === EvType.DoubleTap) {
-    state.phase = 'SELECT_RANK'
-    state.cardIndex = 0
-    state.rankIndex = 0
+    state.phase         = 'SELECT_POSITION'
+    state.positionIndex = 0
     renderFull()
   }
 }
 
+// ─── Position selection ───────────────────────────────────────────────────────
+
+function handlePosition(type: EvType): void {
+  switch (type) {
+    case EvType.ScrollUp:
+      if (canScroll() && state.positionIndex > 0) {
+        state.positionIndex--
+        render()
+      }
+      break
+
+    case EvType.ScrollDown:
+      if (canScroll() && state.positionIndex < POSITIONS.length - 1) {
+        state.positionIndex++
+        render()
+      }
+      break
+
+    case EvType.Tap:
+      state.position  = POSITIONS[state.positionIndex]!
+      state.cardIndex = 0
+      state.rankIndex = 0
+      state.phase     = 'SELECT_RANK'
+      renderFull()
+      break
+
+    case EvType.DoubleTap:
+      // Back to welcome
+      state.phase = 'WELCOME'
+      renderFull()
+      break
+  }
+}
+
+// ─── Rank selection ───────────────────────────────────────────────────────────
+
 function handleRank(type: EvType): void {
   switch (type) {
     case EvType.ScrollUp:
-      if (throttledScroll(EvType.ScrollUp) && state.rankIndex > 0) {
+      if (canScroll() && state.rankIndex > 0) {
         state.rankIndex--
         render()
       }
       break
 
     case EvType.ScrollDown:
-      if (throttledScroll(EvType.ScrollDown) && state.rankIndex < RANKS.length - 1) {
+      if (canScroll() && state.rankIndex < RANKS.length - 1) {
         state.rankIndex++
         render()
       }
       break
 
     case EvType.Tap:
-      // Lock in the rank; move to suit selection
       state.pendingRank = RANKS[state.rankIndex]!
       state.suitIndex   = 0
       state.phase       = 'SELECT_SUIT'
@@ -132,23 +162,24 @@ function handleRank(type: EvType): void {
       break
 
     case EvType.DoubleTap:
-      // Jump straight to analysis if we're at a valid street boundary
       if (canAnalyzeNow()) startSolving()
       break
   }
 }
 
+// ─── Suit selection ───────────────────────────────────────────────────────────
+
 function handleSuit(type: EvType): void {
   switch (type) {
     case EvType.ScrollUp:
-      if (throttledScroll(EvType.ScrollUp) && state.suitIndex > 0) {
+      if (canScroll() && state.suitIndex > 0) {
         state.suitIndex--
         render()
       }
       break
 
     case EvType.ScrollDown:
-      if (throttledScroll(EvType.ScrollDown) && state.suitIndex < SUITS.length - 1) {
+      if (canScroll() && state.suitIndex < SUITS.length - 1) {
         state.suitIndex++
         render()
       }
@@ -165,13 +196,47 @@ function handleSuit(type: EvType): void {
     }
 
     case EvType.DoubleTap:
-      // Cancel this card — go back to rank selection
+      // Cancel — go back to rank selection for this card
       state.phase     = 'SELECT_RANK'
       state.rankIndex = 0
       render()
       break
   }
 }
+
+// ─── Player count selection ───────────────────────────────────────────────────
+
+function handlePlayers(type: EvType): void {
+  switch (type) {
+    case EvType.ScrollUp:
+      if (canScroll() && MIN_PLAYERS + state.playerCountIndex > MIN_PLAYERS) {
+        state.playerCountIndex--
+        render()
+      }
+      break
+
+    case EvType.ScrollDown:
+      if (canScroll() && MIN_PLAYERS + state.playerCountIndex < MAX_PLAYERS) {
+        state.playerCountIndex++
+        render()
+      }
+      break
+
+    case EvType.Tap:
+      // Confirm player count and move on
+      state.playerCount = MIN_PLAYERS + state.playerCountIndex
+      proceedAfterPlayers()
+      break
+
+    case EvType.DoubleTap:
+      // Jump straight to analysis with current player count
+      state.playerCount = MIN_PLAYERS + state.playerCountIndex
+      startSolving()
+      break
+  }
+}
+
+// ─── Result ───────────────────────────────────────────────────────────────────
 
 function handleResult(type: EvType): void {
   if (type === EvType.DoubleTap) {
@@ -182,14 +247,39 @@ function handleResult(type: EvType): void {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+/**
+ * After confirming a card: either open player-count screen (end of each
+ * street) or move straight to the next rank-selection.
+ */
 function advanceAfterCard(): void {
   const nextIndex = state.cardIndex + 1
 
+  // Street just completed → ask for player count
+  if (nextIndex === 5) {
+    // Just entered flop card 3 (index 4), board = 3
+    state.streetForPlayers = 'flop'
+    state.cardIndex        = nextIndex
+    state.phase            = 'SELECT_PLAYERS'
+    renderFull()
+    return
+  }
+  if (nextIndex === 6) {
+    // Just entered turn (index 5), board = 4
+    state.streetForPlayers = 'turn'
+    state.cardIndex        = nextIndex
+    state.phase            = 'SELECT_PLAYERS'
+    renderFull()
+    return
+  }
   if (nextIndex >= TOTAL_CARDS) {
-    startSolving()
+    // Just entered river (index 6), board = 5 — ask for players then solve
+    state.streetForPlayers = 'river'
+    state.phase            = 'SELECT_PLAYERS'
+    renderFull()
     return
   }
 
+  // Otherwise: just advance to the next card
   state.cardIndex   = nextIndex
   state.rankIndex   = 0
   state.suitIndex   = 0
@@ -198,14 +288,35 @@ function advanceAfterCard(): void {
   render()
 }
 
+/**
+ * After player count is confirmed, either start entering the next street's
+ * cards or solve (river done).
+ */
+function proceedAfterPlayers(): void {
+  const street = state.streetForPlayers
+
+  if (street === 'river') {
+    // All cards entered — solve now
+    startSolving()
+    return
+  }
+
+  // Next street's first card: cardIndex was already advanced in advanceAfterCard
+  state.rankIndex       = 0
+  state.suitIndex       = 0
+  state.pendingRank     = null
+  state.streetForPlayers = null
+  state.phase           = 'SELECT_RANK'
+  renderFull()
+}
+
 function startSolving(): void {
   state.phase = 'SOLVING'
   render()
 
-  // Yield so the "Calculating…" frame renders before the heavy compute
   setTimeout(() => {
     try {
-      state.result = solve(holeCards(), boardCards())
+      state.result = solve(holeCards(), boardCards(), state.position, state.playerCount)
     } catch (err) {
       console.error('[solver] error:', err)
       state.result = null

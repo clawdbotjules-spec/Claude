@@ -3,88 +3,131 @@ import type { Card, Rank } from './poker/cards'
 import type { SolverResult } from './poker/solver'
 
 export type Phase =
-  | 'WELCOME'       // splash / start screen
-  | 'SELECT_RANK'   // scrolling through card ranks
-  | 'SELECT_SUIT'   // scrolling through suits after rank locked in
-  | 'SOLVING'       // computing equity (async)
-  | 'RESULT'        // showing GTO recommendation
+  | 'WELCOME'
+  | 'SELECT_POSITION'   // new: scroll / tap to pick table position
+  | 'SELECT_RANK'       // scroll ranks A→2, tap to confirm
+  | 'SELECT_SUIT'       // scroll suits ♠♥♦♣, tap to confirm
+  | 'SELECT_PLAYERS'    // new: scroll / tap to set active player count
+  | 'SOLVING'           // Monte Carlo in progress
+  | 'RESULT'            // show GTO recommendation
 
-// Total cards: 2 hole + up to 5 community (flop×3, turn, river)
+// ─── Position ────────────────────────────────────────────────────────────────
+
+export type Position = 'BTN' | 'CO' | 'HJ' | 'MP' | 'UTG' | 'SB' | 'BB'
+
+/** Ordered best-to-worst (intuitive scrolling direction). */
+export const POSITIONS: Position[] = ['BTN', 'CO', 'HJ', 'MP', 'UTG', 'SB', 'BB']
+
+export const POSITION_LABEL: Record<Position, string> = {
+  BTN: 'BTN  Button',
+  CO:  'CO   Cutoff',
+  HJ:  'HJ   Hi-Jack',
+  MP:  'MP   Mid-Pos',
+  UTG: 'UTG  Early',
+  SB:  'SB   Sm.Blind',
+  BB:  'BB   Bg.Blind',
+}
+
+/** True when the position is in-position post-flop vs most opponents. */
+export function isIP(pos: Position): boolean {
+  return pos === 'BTN' || pos === 'CO' || pos === 'HJ'
+}
+
+/** True when position is always out-of-position post-flop. */
+export function isOOP(pos: Position): boolean {
+  return pos === 'SB' || pos === 'BB'
+}
+
+// ─── Player count ─────────────────────────────────────────────────────────────
+
+export const MIN_PLAYERS = 2
+export const MAX_PLAYERS = 9
+export const DEFAULT_PLAYERS = 6
+
+// ─── Cards ────────────────────────────────────────────────────────────────────
+
 export const TOTAL_CARDS = 7
+
+// ─── App state ────────────────────────────────────────────────────────────────
 
 export interface AppState {
   phase: Phase
+  bridge: EvenAppBridge | null
 
-  // Which card we are currently entering (0 = hole1, 1 = hole2, 2-4 = flop, 5 = turn, 6 = river)
-  cardIndex: number
-
-  // Selection cursors
-  rankIndex: number   // 0–12 (A→2)
-  suitIndex: number   // 0–3  (♠♥♦♣)
-
-  // Rank locked in for current card while choosing suit
+  // Card entry
+  cardIndex: number            // 0–6
+  rankIndex: number            // 0–12 (A→2)
+  suitIndex: number            // 0–3  (♠♥♦♣)
   pendingRank: Rank | null
-
-  // Cards entered so far (null = not yet entered)
   selectedCards: (Card | null)[]
 
-  // Filled in after SOLVING completes
-  result: SolverResult | null
+  // Position selection
+  position: Position | null
+  positionIndex: number        // cursor into POSITIONS[]
 
-  // Reference to the Even Hub bridge
-  bridge: EvenAppBridge | null
+  // Player count selection
+  playerCount: number          // 2–9
+  playerCountIndex: number     // 0 = MIN_PLAYERS, stored across streets
+  streetForPlayers: 'flop' | 'turn' | 'river' | null  // which street just ended
+
+  // Result
+  result: SolverResult | null
 }
 
 export function createInitialState(): AppState {
   return {
     phase: 'WELCOME',
+    bridge: null,
+
     cardIndex: 0,
     rankIndex: 0,
     suitIndex: 0,
     pendingRank: null,
     selectedCards: Array<Card | null>(TOTAL_CARDS).fill(null),
+
+    position: null,
+    positionIndex: 0,            // default cursor = BTN
+
+    playerCount: DEFAULT_PLAYERS,
+    playerCountIndex: DEFAULT_PLAYERS - MIN_PLAYERS,
+    streetForPlayers: null,
+
     result: null,
-    bridge: null,
   }
 }
 
-// Mutable singleton — the whole app reads/writes this object.
 export const state: AppState = createInitialState()
 
 export function resetCards(): void {
-  state.phase = 'WELCOME'
-  state.cardIndex = 0
-  state.rankIndex = 0
-  state.suitIndex = 0
-  state.pendingRank = null
-  state.selectedCards = Array<Card | null>(TOTAL_CARDS).fill(null)
-  state.result = null
+  // Keep position (user stays at same table) but reset everything else
+  const savedPos      = state.position
+  const savedPosIndex = state.positionIndex
+  const savedBridge   = state.bridge
+
+  Object.assign(state, createInitialState())
+
+  state.bridge        = savedBridge
+  state.position      = savedPos
+  state.positionIndex = savedPosIndex
 }
 
 // ─── Derived helpers ──────────────────────────────────────────────────────────
 
-/** Cards that have actually been entered so far. */
 export function enteredCards(): Card[] {
   return state.selectedCards.filter((c): c is Card => c !== null)
 }
 
-/** Hero's hole cards (always the first two). */
 export function holeCards(): Card[] {
   return state.selectedCards.slice(0, 2).filter((c): c is Card => c !== null)
 }
 
-/** Community cards (flop / turn / river). */
 export function boardCards(): Card[] {
   return state.selectedCards.slice(2).filter((c): c is Card => c !== null)
 }
 
 /**
- * True when the user can double-tap to jump straight to analysis.
+ * Can the user double-tap to jump to analysis?
  * Only allowed at natural street boundaries to avoid a partial board.
- *   board=0 → pre-flop analysis
- *   board=3 → flop analysis
- *   board=4 → turn analysis
- *   board=5 → river analysis (but the app auto-solves there anyway)
  */
 export function canAnalyzeNow(): boolean {
   if (holeCards().length < 2) return false
