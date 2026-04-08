@@ -153,9 +153,9 @@ function selectPosition(): string {
   return join(
     '\u25B6 Your Position',
     '',
-    prev  ? `  ${prev}`  : '  \u2014',
-    `\u25BA ${label} \u25C4`,
-    next  ? `  ${next}`  : '  \u2014',
+    prev  ? `  ${prev}`  : '',
+    `\u2192 ${label}`,
+    next  ? `  ${next}`  : '',
     '',
     'Scroll \u2195  Tap=confirm',
   )
@@ -176,9 +176,9 @@ function selectRank(): string {
   return join(
     `\u25B6 ${label}  [${pos}]`,
     '',
-    prev ? `  ${prev}` : '  \u2014',
-    `\u25BA ${rank} \u25C4`,
-    next ? `  ${next}` : '  \u2014',
+    prev ? `  ${prev}` : '',
+    `\u2192 ${rank}`,
+    next ? `  ${next}` : '',
     '',
     entered ? `Cards: ${entered}` : '',
     hint,
@@ -197,9 +197,9 @@ function selectSuit(): string {
   return join(
     `\u25B6 ${label}: ${state.pendingRank}`,
     '',
-    prev ? `  ${SUIT_SYMBOL[prev]}` : '  \u2014',
-    `\u25BA ${sym} \u25C4`,
-    next ? `  ${SUIT_SYMBOL[next]}` : '  \u2014',
+    prev ? `  ${SUIT_SYMBOL[prev]}` : '',
+    `\u2192 ${sym}`,
+    next ? `  ${SUIT_SYMBOL[next]}` : '',
     '',
     'Scroll \u2195  Tap=confirm',
     '2x tap = back to rank',
@@ -222,9 +222,9 @@ function selectPlayers(): string {
   return join(
     `\u25B6 Players (${streetLabel})`,
     '',
-    prev !== null ? `  ${prev} players` : '  \u2014',
-    `\u25BA ${count} players \u25C4`,
-    next !== null ? `  ${next} players` : '  \u2014',
+    prev !== null ? `  ${prev} players` : '',
+    `\u2192 ${count} players`,
+    next !== null ? `  ${next} players` : '',
     '',
     `Hand: ${hd}`,
     bd ? `Board: ${bd}` : '',
@@ -269,6 +269,11 @@ function result(): string {
       return `${bar.padEnd(10)} ${String(a.freq).padStart(3)}%  ${a.label}`
     })
 
+  const canContinue = boardCards().length < 5
+  const footer = canContinue
+    ? 'Tap=add turn/river  2x=new hand'
+    : '2x tap = new hand'
+
   return join(
     `${hd}  [${pos} / ${r.playerCount}p]`,
     bd ? `Board: ${bd}` : '',
@@ -277,7 +282,7 @@ function result(): string {
     '\u2500\u2500 GTO Strategy \u2500\u2500',
     ...actionLines,
     '',
-    '2x tap = new hand',
+    footer,
   )
 }
 

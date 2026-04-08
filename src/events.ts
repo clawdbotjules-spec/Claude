@@ -239,9 +239,27 @@ function handlePlayers(type: EvType): void {
 // ─── Result ───────────────────────────────────────────────────────────────────
 
 function handleResult(type: EvType): void {
-  if (type === EvType.DoubleTap) {
-    resetCards()
-    renderFull()
+  switch (type) {
+    case EvType.Tap: {
+      if (boardCards().length >= 5) {
+        // River already complete — tap also restarts
+        resetCards()
+        renderFull()
+      } else {
+        // Continue adding cards for the next street
+        state.phase       = 'SELECT_RANK'
+        state.rankIndex   = 0
+        state.suitIndex   = 0
+        state.pendingRank = null
+        // state.cardIndex is already pointing at the next unconfirmed card
+        renderFull()
+      }
+      break
+    }
+    case EvType.DoubleTap:
+      resetCards()
+      renderFull()
+      break
   }
 }
 

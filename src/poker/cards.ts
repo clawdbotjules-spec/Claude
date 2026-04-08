@@ -11,10 +11,10 @@ export const RANKS: Rank[] = ['A', 'K', 'Q', 'J', 'T', '9', '8', '7', '6', '5', 
 export const SUITS: Suit[] = ['s', 'h', 'd', 'c']
 
 export const SUIT_SYMBOL: Record<Suit, string> = {
-  s: '\u2660', // ♠
-  h: '\u2665', // ♥
-  d: '\u2666', // ♦
-  c: '\u2663', // ♣
+  s: '\u2660', // ♠  spades
+  h: '\u2665', // ♥  hearts
+  d: '\u25C6', // ◆  diamonds (G2 font lacks ♦ U+2666; ◆ U+25C6 is supported)
+  c: '\u2663', // ♣  clubs
 }
 
 export function cardDisplay(card: Card): string {
