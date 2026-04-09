@@ -4,10 +4,11 @@ import type { SolverResult } from './poker/solver'
 
 export type Phase =
   | 'WELCOME'
-  | 'SELECT_POSITION'   // new: scroll / tap to pick table position
+  | 'SELECT_POSITION'   // scroll / tap to pick table position
+  | 'SELECT_SPR'        // scroll / tap to set stack-to-pot ratio
   | 'SELECT_RANK'       // scroll ranks A→2, tap to confirm
   | 'SELECT_SUIT'       // scroll suits ♠♥♦♣, tap to confirm
-  | 'SELECT_PLAYERS'    // new: scroll / tap to set active player count
+  | 'SELECT_PLAYERS'    // scroll / tap to set active player count
   | 'SOLVING'           // Monte Carlo in progress
   | 'RESULT'            // show GTO recommendation
 
@@ -44,6 +45,13 @@ export const MIN_PLAYERS = 2
 export const MAX_PLAYERS = 9
 export const DEFAULT_PLAYERS = 6
 
+// ─── SPR ──────────────────────────────────────────────────────────────────────
+
+/** Predefined SPR options presented to the user. */
+export const SPR_VALUES = [1, 2, 3, 4, 6, 8, 10, 15, 20, 30] as const
+/** Default index into SPR_VALUES (SPR = 10, typical 100BB cash game). */
+export const DEFAULT_SPR_INDEX = 6
+
 // ─── Cards ────────────────────────────────────────────────────────────────────
 
 export const TOTAL_CARDS = 7
@@ -70,6 +78,10 @@ export interface AppState {
   playerCountIndex: number     // 0 = MIN_PLAYERS, stored across streets
   streetForPlayers: 'flop' | 'turn' | 'river' | null  // which street just ended
 
+  // SPR selection
+  spr: number                  // effective stack / pot (set once at hand start)
+  sprIndex: number             // cursor into SPR_VALUES[]
+
   // Result
   result: SolverResult | null
 }
@@ -92,6 +104,9 @@ export function createInitialState(): AppState {
     playerCountIndex: DEFAULT_PLAYERS - MIN_PLAYERS,
     streetForPlayers: null,
 
+    spr: SPR_VALUES[DEFAULT_SPR_INDEX],
+    sprIndex: DEFAULT_SPR_INDEX,
+
     result: null,
   }
 }
@@ -99,16 +114,20 @@ export function createInitialState(): AppState {
 export const state: AppState = createInitialState()
 
 export function resetCards(): void {
-  // Keep position (user stays at same table) but reset everything else
+  // Keep position and SPR (user stays at same table) but reset everything else
   const savedPos      = state.position
   const savedPosIndex = state.positionIndex
   const savedBridge   = state.bridge
+  const savedSpr      = state.spr
+  const savedSprIndex = state.sprIndex
 
   Object.assign(state, createInitialState())
 
   state.bridge        = savedBridge
   state.position      = savedPos
   state.positionIndex = savedPosIndex
+  state.spr           = savedSpr
+  state.sprIndex      = savedSprIndex
 }
 
 // ─── Derived helpers ──────────────────────────────────────────────────────────

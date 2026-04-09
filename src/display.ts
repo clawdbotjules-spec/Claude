@@ -29,6 +29,7 @@ import {
   POSITION_LABEL,
   MIN_PLAYERS,
   MAX_PLAYERS,
+  SPR_VALUES,
 } from './state'
 import { RANKS, SUITS, SUIT_SYMBOL, cardDisplay, cardIndexLabel } from './poker/cards'
 
@@ -117,6 +118,7 @@ function buildContent(): string {
   switch (state.phase) {
     case 'WELCOME':          return welcome()
     case 'SELECT_POSITION':  return selectPosition()
+    case 'SELECT_SPR':       return selectSPR()
     case 'SELECT_RANK':      return selectRank()
     case 'SELECT_SUIT':      return selectSuit()
     case 'SELECT_PLAYERS':   return selectPlayers()
@@ -158,6 +160,26 @@ function selectPosition(): string {
     next  ? `  ${next}`  : '',
     '',
     'Scroll \u2195  Tap=confirm',
+  )
+}
+
+// ── SPR selection ─────────────────────────────────────────────────────────────
+
+function selectSPR(): string {
+  const spr  = SPR_VALUES[state.sprIndex]!
+  const prev = state.sprIndex > 0                      ? SPR_VALUES[state.sprIndex - 1] : null
+  const next = state.sprIndex < SPR_VALUES.length - 1  ? SPR_VALUES[state.sprIndex + 1] : null
+  const pos  = state.position ?? '?'
+
+  return join(
+    `\u25B6 Stack-to-Pot [${pos}]`,
+    '',
+    prev !== undefined ? `  SPR ${prev}` : '',
+    `\u2192 SPR ${spr}`,
+    next !== undefined ? `  SPR ${next}` : '',
+    '',
+    'Scroll \u2195  Tap=confirm',
+    '2x=skip (keep current)',
   )
 }
 
@@ -274,11 +296,14 @@ function result(): string {
     ? 'Tap=add turn/river  2x=new hand'
     : '2x tap = new hand'
 
+  const detailPart = r.handDetail ? `  ${r.handDetail}` : ''
+  const sprLabel   = `SPR:${r.spr}`
+
   return join(
     `${hd}  [${pos} / ${r.playerCount}p]`,
     bd ? `Board: ${bd}` : '',
-    `Made: ${r.handName}  ${streetLabel}`,
-    `Equity: ${eqPct}%`,
+    `${r.handName}${detailPart}  ${streetLabel}`,
+    `Eq: ${eqPct}%  ${sprLabel}`,
     '\u2500\u2500 GTO Strategy \u2500\u2500',
     ...actionLines,
     '',

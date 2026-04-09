@@ -19,6 +19,7 @@ import {
   POSITIONS,
   MIN_PLAYERS,
   MAX_PLAYERS,
+  SPR_VALUES,
 } from './state'
 import type { Card } from './poker/cards'
 import { RANKS, SUITS } from './poker/cards'
@@ -84,6 +85,7 @@ export function handleEvent(event: any): void {
   switch (state.phase) {
     case 'WELCOME':          handleWelcome(type);   break
     case 'SELECT_POSITION':  handlePosition(type);  break
+    case 'SELECT_SPR':       handleSPR(type);       break
     case 'SELECT_RANK':      handleRank(type);      break
     case 'SELECT_SUIT':      handleSuit(type);      break
     case 'SELECT_PLAYERS':   handlePlayers(type);   break
@@ -121,7 +123,39 @@ function handlePosition(type: EvType): void {
       break
 
     case EvType.Tap:
-      state.position  = POSITIONS[state.positionIndex]!
+      state.position = POSITIONS[state.positionIndex]!
+      state.phase    = 'SELECT_SPR'
+      renderFull()
+      break
+
+    case EvType.DoubleTap:
+      // Back to welcome
+      state.phase = 'WELCOME'
+      renderFull()
+      break
+  }
+}
+
+// ─── SPR selection ────────────────────────────────────────────────────────────
+
+function handleSPR(type: EvType): void {
+  switch (type) {
+    case EvType.ScrollUp:
+      if (canScroll() && state.sprIndex > 0) {
+        state.sprIndex--
+        render()
+      }
+      break
+
+    case EvType.ScrollDown:
+      if (canScroll() && state.sprIndex < SPR_VALUES.length - 1) {
+        state.sprIndex++
+        render()
+      }
+      break
+
+    case EvType.Tap:
+      state.spr       = SPR_VALUES[state.sprIndex]!
       state.cardIndex = 0
       state.rankIndex = 0
       state.phase     = 'SELECT_RANK'
@@ -129,8 +163,10 @@ function handlePosition(type: EvType): void {
       break
 
     case EvType.DoubleTap:
-      // Back to welcome
-      state.phase = 'WELCOME'
+      // Skip — keep current SPR value
+      state.cardIndex = 0
+      state.rankIndex = 0
+      state.phase     = 'SELECT_RANK'
       renderFull()
       break
   }
@@ -334,7 +370,7 @@ function startSolving(): void {
 
   setTimeout(() => {
     try {
-      state.result = solve(holeCards(), boardCards(), state.position, state.playerCount)
+      state.result = solve(holeCards(), boardCards(), state.position, state.playerCount, state.spr)
     } catch (err) {
       console.error('[solver] error:', err)
       state.result = null
